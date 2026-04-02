@@ -7,21 +7,32 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { parseDocument, type ParsedContent } from "./parser.js";
+import { parseBookDocument, type BookContent } from "./book-parser.js";
 import {
   searchGlossary,
   getBlogPost,
   getComparison,
   searchContent,
   listTools,
+  getBookChapter,
+  getBookConcept,
+  searchBook,
+  listBookChapters,
+  searchAll,
 } from "./tools.js";
 
-const DOCS_URL = "https://getrecon.xyz/llms-full.txt";
+// ─── Sources ────────────────────────────────────────────────────────────
+const SITE_URL = "https://getrecon.xyz/llms-full.txt";
+const BOOK_URL = "https://book.getrecon.xyz/llms-full.txt";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10 MB
 const REFRESH_MIN_INTERVAL_MS = 60 * 1000; // 60 seconds
 
-let cachedContent: ParsedContent | null = null;
-let lastFetchTime = 0;
+// ─── Cache state ────────────────────────────────────────────────────────
+let cachedSiteContent: ParsedContent | null = null;
+let cachedBookContent: BookContent | null = null;
+let lastSiteFetch = 0;
+let lastBookFetch = 0;
 let lastRefreshRequest = 0;
 
 async function fetchWithRetry(
@@ -35,7 +46,7 @@ async function fetchWithRetry(
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      const contentLength = parseInt(response.headers.get('content-length') || '0');
+      const contentLength = parseInt(response.headers.get("content-length") || "0");
       if (contentLength > MAX_RESPONSE_SIZE) {
         throw new Error(`Response too large: ${contentLength} bytes (max ${MAX_RESPONSE_SIZE})`);
       }
@@ -43,7 +54,7 @@ async function fetchWithRetry(
     } catch (err) {
       if (attempt === retries) {
         throw new Error(
-          `Failed to fetch documentation after ${retries} attempts. The upstream service may be temporarily unavailable.`
+          `Failed to fetch ${url} after ${retries} attempts. The upstream service may be temporarily unavailable.`
         );
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
@@ -52,209 +63,255 @@ async function fetchWithRetry(
   throw new Error("Unreachable");
 }
 
-async function getContent(): Promise<ParsedContent> {
+async function getSiteContent(): Promise<ParsedContent> {
   const now = Date.now();
-  if (cachedContent && now - lastFetchTime < CACHE_TTL_MS) {
-    return cachedContent;
+  if (cachedSiteContent && now - lastSiteFetch < CACHE_TTL_MS) {
+    return cachedSiteContent;
   }
+  const rawText = await fetchWithRetry(SITE_URL);
+  cachedSiteContent = parseDocument(rawText);
+  lastSiteFetch = now;
+  return cachedSiteContent;
+}
 
-  const rawText = await fetchWithRetry(DOCS_URL);
-  cachedContent = parseDocument(rawText);
-  lastFetchTime = now;
-
-  return cachedContent;
+async function getBookContent(): Promise<BookContent> {
+  const now = Date.now();
+  if (cachedBookContent && now - lastBookFetch < CACHE_TTL_MS) {
+    return cachedBookContent;
+  }
+  try {
+    const rawText = await fetchWithRetry(BOOK_URL);
+    cachedBookContent = parseBookDocument(rawText);
+    lastBookFetch = now;
+  } catch {
+    // Book URL may not be deployed yet — return empty content
+    if (!cachedBookContent) {
+      cachedBookContent = { chapters: new Map(), concepts: new Map(), faqs: new Map(), overview: "" };
+    }
+  }
+  return cachedBookContent;
 }
 
 async function refreshCache(): Promise<string> {
   const now = Date.now();
   if (now - lastRefreshRequest < REFRESH_MIN_INTERVAL_MS) {
-    return `Cache refresh rate limited. Please wait at least 60 seconds between refreshes.`;
+    return "Cache refresh rate limited. Please wait at least 60 seconds between refreshes.";
   }
   lastRefreshRequest = now;
-  cachedContent = null;
-  lastFetchTime = 0;
-  await getContent();
-  return "Cache refreshed successfully.";
+  cachedSiteContent = null;
+  cachedBookContent = null;
+  lastSiteFetch = 0;
+  lastBookFetch = 0;
+
+  const results: string[] = [];
+  try {
+    await getSiteContent();
+    results.push("Site content refreshed.");
+  } catch (err) {
+    results.push(`Site content failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    await getBookContent();
+    results.push("Book content refreshed.");
+  } catch (err) {
+    results.push(`Book content failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  return results.join(" ");
 }
 
+// ─── Validate string param ─────────────────────────────────────────────
+function validateString(value: unknown, name: string, maxLen: number = 1000): string | null {
+  if (!value || typeof value !== "string") return `Error: '${name}' parameter is required.`;
+  if (value.length > maxLen) return `Error: '${name}' exceeds maximum length of ${maxLen} characters.`;
+  return null;
+}
+
+// ─── Server ─────────────────────────────────────────────────────────────
 const server = new Server(
-  {
-    name: "recon-mcp-knowledge",
-    version: "1.0.0",
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
+  { name: "recon-mcp-knowledge", version: "2.0.0" },
+  { capabilities: { tools: {} } }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: "search_glossary",
-        description:
-          "Search the Recon glossary for terms matching a query. Returns top 5 matching glossary terms with full definitions.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            query: {
-              type: "string",
-              description: "The search query to find glossary terms",
-            },
-          },
-          required: ["query"],
-        },
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [
+    // ── Site tools (getrecon.xyz) ──────────────────────────────────
+    {
+      name: "search_glossary",
+      description: "Search the Recon glossary for terms matching a query. Returns top 5 matching glossary terms with full definitions. Source: getrecon.xyz",
+      inputSchema: {
+        type: "object" as const,
+        properties: { query: { type: "string", description: "The search query to find glossary terms" } },
+        required: ["query"],
       },
-      {
-        name: "get_blog_post",
-        description:
-          "Get a full blog post by its slug. Returns the complete post content, metadata, and URL.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            slug: {
-              type: "string",
-              description:
-                "The URL slug of the blog post (e.g. 'what-is-fuzzing')",
-            },
-          },
-          required: ["slug"],
-        },
+    },
+    {
+      name: "get_blog_post",
+      description: "Get a full blog post by its slug. Returns the complete post content, metadata, and URL. Source: getrecon.xyz",
+      inputSchema: {
+        type: "object" as const,
+        properties: { slug: { type: "string", description: "The URL slug of the blog post (e.g. 'what-is-fuzzing')" } },
+        required: ["slug"],
       },
-      {
-        name: "get_comparison",
-        description:
-          "Get a comparison article by slug. Returns both entities, their strengths, conclusion, and FAQs.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            slug: {
-              type: "string",
-              description:
-                "The URL slug of the comparison (e.g. 'echidna-vs-medusa')",
-            },
-          },
-          required: ["slug"],
-        },
+    },
+    {
+      name: "get_comparison",
+      description: "Get a comparison article by slug. Returns both entities, their strengths, conclusion, and FAQs. Source: getrecon.xyz",
+      inputSchema: {
+        type: "object" as const,
+        properties: { slug: { type: "string", description: "The URL slug of the comparison (e.g. 'echidna-vs-medusa')" } },
+        required: ["slug"],
       },
-      {
-        name: "search_content",
-        description:
-          "Search across all Recon content types (blog posts, glossary, comparisons, tools). Returns top 10 matches.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            query: {
-              type: "string",
-              description: "The search query",
-            },
-          },
-          required: ["query"],
-        },
+    },
+    {
+      name: "search_site",
+      description: "Search across getrecon.xyz content (blog posts, glossary, comparisons, tools). Returns top 10 matches.",
+      inputSchema: {
+        type: "object" as const,
+        properties: { query: { type: "string", description: "The search query" } },
+        required: ["query"],
       },
-      {
-        name: "list_tools",
-        description:
-          "List all developer tools documented in Recon. Returns up to 20 tools with descriptions and URLs.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {},
-          required: [],
-        },
+    },
+    {
+      name: "list_tools",
+      description: "List all developer tools documented on getrecon.xyz. Returns up to 20 tools with descriptions and URLs.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+        required: [],
       },
-      {
-        name: "refresh_cache",
-        description:
-          "Force refresh the documentation cache. Fetches the latest content from getrecon.xyz.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {},
-          required: [],
-        },
+    },
+    // ── Book tools (book.getrecon.xyz) ─────────────────────────────
+    {
+      name: "get_book_chapter",
+      description: "Get a book documentation chapter by slug. Returns the full chapter content, category, and URL. Source: book.getrecon.xyz. Covers: Chimera framework, invariant testing, bootcamp, Recon Pro, tools, OSS repos.",
+      inputSchema: {
+        type: "object" as const,
+        properties: { slug: { type: "string", description: "The chapter slug (e.g. 'chimera-framework', 'example-project', 'running-jobs')" } },
+        required: ["slug"],
       },
-    ],
-  };
-});
+    },
+    {
+      name: "get_book_concept",
+      description: "Get a technical concept explanation from the Recon Book. Covers: invariant testing, Chimera, stateful fuzzing, handlers, ghost variables, clamping, optimization mode, dynamic replacement, governance fuzzing, Recon Magic.",
+      inputSchema: {
+        type: "object" as const,
+        properties: { slug: { type: "string", description: "The concept slug (e.g. 'what-is-invariant-testing', 'what-is-clamping', 'what-is-optimization-mode')" } },
+        required: ["slug"],
+      },
+    },
+    {
+      name: "search_book",
+      description: "Search across Recon Book documentation (chapters, concepts, FAQs). Returns top 10 matches. Source: book.getrecon.xyz",
+      inputSchema: {
+        type: "object" as const,
+        properties: { query: { type: "string", description: "The search query" } },
+        required: ["query"],
+      },
+    },
+    {
+      name: "list_book_chapters",
+      description: "List all chapters in the Recon Book, grouped by category (Getting Started, Writing Invariant Tests, Bootcamp, Using Recon Pro, Free Tools, OSS, Reference).",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+      },
+    },
+    // ── Cross-source tools ─────────────────────────────────────────
+    {
+      name: "search_all",
+      description: "Search across ALL Recon content — both getrecon.xyz (blog, glossary, comparisons, tools) and book.getrecon.xyz (chapters, concepts, FAQs). Returns top 15 matches with source labels.",
+      inputSchema: {
+        type: "object" as const,
+        properties: { query: { type: "string", description: "The search query" } },
+        required: ["query"],
+      },
+    },
+    {
+      name: "refresh_cache",
+      description: "Force refresh the documentation cache from both getrecon.xyz and book.getrecon.xyz. Rate limited to once per 60 seconds.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+      },
+    },
+  ],
+}));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
     switch (name) {
+      // ── Site tools ──────────────────────────────────────────────
       case "search_glossary": {
-        const query = (args as { query: string }).query;
-        if (!query) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'query' parameter is required." }],
-          };
-        }
-        if (query.length > 1000) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'query' parameter exceeds maximum length of 1000 characters." }],
-          };
-        }
-        const content = await getContent();
-        const result = searchGlossary(content, query);
-        return { content: [{ type: "text" as const, text: result }] };
+        const err = validateString((args as Record<string, unknown>).query, "query");
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const content = await getSiteContent();
+        return { content: [{ type: "text" as const, text: searchGlossary(content, (args as { query: string }).query) }] };
       }
 
       case "get_blog_post": {
-        const slug = (args as { slug: string }).slug;
-        if (!slug) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'slug' parameter is required." }],
-          };
-        }
-        if (slug.length > 500) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'slug' parameter exceeds maximum length of 500 characters." }],
-          };
-        }
-        const content = await getContent();
-        const result = getBlogPost(content, slug);
-        return { content: [{ type: "text" as const, text: result }] };
+        const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const content = await getSiteContent();
+        return { content: [{ type: "text" as const, text: getBlogPost(content, (args as { slug: string }).slug) }] };
       }
 
       case "get_comparison": {
-        const slug = (args as { slug: string }).slug;
-        if (!slug) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'slug' parameter is required." }],
-          };
-        }
-        if (slug.length > 500) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'slug' parameter exceeds maximum length of 500 characters." }],
-          };
-        }
-        const content = await getContent();
-        const result = getComparison(content, slug);
-        return { content: [{ type: "text" as const, text: result }] };
+        const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const content = await getSiteContent();
+        return { content: [{ type: "text" as const, text: getComparison(content, (args as { slug: string }).slug) }] };
       }
 
+      case "search_site":
       case "search_content": {
-        const query = (args as { query: string }).query;
-        if (!query) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'query' parameter is required." }],
-          };
-        }
-        if (query.length > 1000) {
-          return {
-            content: [{ type: "text" as const, text: "Error: 'query' parameter exceeds maximum length of 1000 characters." }],
-          };
-        }
-        const content = await getContent();
-        const result = searchContent(content, query);
-        return { content: [{ type: "text" as const, text: result }] };
+        const err = validateString((args as Record<string, unknown>).query, "query");
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const content = await getSiteContent();
+        return { content: [{ type: "text" as const, text: searchContent(content, (args as { query: string }).query) }] };
       }
 
       case "list_tools": {
-        const content = await getContent();
-        const result = listTools(content);
-        return { content: [{ type: "text" as const, text: result }] };
+        const content = await getSiteContent();
+        return { content: [{ type: "text" as const, text: listTools(content) }] };
+      }
+
+      // ── Book tools ──────────────────────────────────────────────
+      case "get_book_chapter": {
+        const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const book = await getBookContent();
+        return { content: [{ type: "text" as const, text: getBookChapter(book, (args as { slug: string }).slug) }] };
+      }
+
+      case "get_book_concept": {
+        const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const book = await getBookContent();
+        return { content: [{ type: "text" as const, text: getBookConcept(book, (args as { slug: string }).slug) }] };
+      }
+
+      case "search_book": {
+        const err = validateString((args as Record<string, unknown>).query, "query");
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const book = await getBookContent();
+        return { content: [{ type: "text" as const, text: searchBook(book, (args as { query: string }).query) }] };
+      }
+
+      case "list_book_chapters": {
+        const book = await getBookContent();
+        return { content: [{ type: "text" as const, text: listBookChapters(book) }] };
+      }
+
+      // ── Cross-source ────────────────────────────────────────────
+      case "search_all": {
+        const err = validateString((args as Record<string, unknown>).query, "query");
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const [content, book] = await Promise.all([getSiteContent(), getBookContent()]);
+        return { content: [{ type: "text" as const, text: searchAll(content, book, (args as { query: string }).query) }] };
       }
 
       case "refresh_cache": {
@@ -277,10 +334,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Prefetch content on startup (non-blocking)
-getContent().catch((err) => {
-  console.error("Failed to prefetch documentation:", err);
-});
+// Prefetch both sources on startup (non-blocking)
+Promise.all([
+  getSiteContent().catch((err) => console.error("Failed to prefetch site:", err)),
+  getBookContent().catch((err) => console.error("Failed to prefetch book:", err)),
+]);
 
 async function main() {
   const transport = new StdioServerTransport();

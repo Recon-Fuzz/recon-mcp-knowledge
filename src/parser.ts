@@ -37,6 +37,9 @@ export interface ParsedContent {
   tools: DevTool[];
 }
 
+// Re-export for convenience
+export type { BookContent, BookChapter, BookConcept, BookFAQ } from "./book-parser.js";
+
 function slugify(text: string): string {
   return text
     .toLowerCase()

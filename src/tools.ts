@@ -1,4 +1,5 @@
 import type { ParsedContent, BlogPost, GlossaryTerm, Comparison, DevTool } from "./parser.js";
+import type { BookContent, BookChapter, BookConcept, BookFAQ } from "./book-parser.js";
 
 interface SearchResult {
   type: string;
@@ -238,4 +239,245 @@ export function listTools(content: ParsedContent): string {
   );
 
   return `Developer Tools (${toolList.length}):\n\n${lines.join("\n\n")}`;
+}
+
+// ─── Book documentation tools ───────────────────────────────────────────
+
+export function getBookChapter(
+  book: BookContent,
+  slug: string
+): string {
+  // Direct lookup
+  const chapter = book.chapters.get(slug);
+  if (chapter) return formatBookChapter(chapter);
+
+  // Fuzzy match
+  for (const [key, ch] of book.chapters) {
+    if (key.includes(slug) || slug.includes(key)) {
+      return formatBookChapter(ch);
+    }
+  }
+
+  const available = Array.from(book.chapters.values())
+    .map((ch) => `  - ${ch.slug} (${ch.category})`)
+    .slice(0, 30);
+  return `Chapter "${slug}" not found.\n\nAvailable chapters:\n${available.join("\n")}`;
+}
+
+function formatBookChapter(ch: BookChapter): string {
+  let result = `# ${ch.title}\n\n`;
+  result += `**Category:** ${ch.category}\n`;
+  result += `**URL:** ${ch.url}\n\n`;
+  result += ch.content;
+  return result;
+}
+
+export function getBookConcept(
+  book: BookContent,
+  slug: string
+): string {
+  const concept = book.concepts.get(slug);
+  if (concept) return `# ${concept.title}\n\n${concept.content}`;
+
+  // Fuzzy match
+  for (const [key, c] of book.concepts) {
+    if (key.includes(slug) || slug.includes(key)) {
+      return `# ${c.title}\n\n${c.content}`;
+    }
+  }
+
+  const available = Array.from(book.concepts.keys()).slice(0, 20);
+  return `Concept "${slug}" not found.\n\nAvailable concepts:\n${available.map((s) => `  - ${s}`).join("\n")}`;
+}
+
+export function searchBook(
+  book: BookContent,
+  query: string
+): string {
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (queryTerms.length === 0) return "No query provided.";
+
+  interface BookSearchResult {
+    type: string;
+    title: string;
+    snippet: string;
+    url: string;
+    score: number;
+  }
+
+  const results: BookSearchResult[] = [];
+
+  // Search chapters
+  for (const [, ch] of book.chapters) {
+    const text = `${ch.title} ${ch.category} ${ch.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({
+        type: "chapter",
+        title: `${ch.title} (${ch.category})`,
+        snippet: snippet(ch.content, 250),
+        url: ch.url,
+        score: s,
+      });
+    }
+  }
+
+  // Search concepts
+  for (const [, concept] of book.concepts) {
+    const text = `${concept.title} ${concept.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({
+        type: "concept",
+        title: concept.title,
+        snippet: snippet(concept.content, 250),
+        url: "",
+        score: s,
+      });
+    }
+  }
+
+  // Search FAQs
+  for (const [, faq] of book.faqs) {
+    const text = `${faq.question} ${faq.answer}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({
+        type: "faq",
+        title: faq.question,
+        snippet: snippet(faq.answer, 250),
+        url: "",
+        score: s,
+      });
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  const top = results.slice(0, 10);
+
+  if (top.length === 0) {
+    return `No book documentation results found for "${query}".`;
+  }
+
+  const lines = top.map(
+    (r, i) =>
+      `${i + 1}. [${r.type.toUpperCase()}] **${r.title}** (score: ${r.score.toFixed(1)})${r.url ? `\n   URL: ${r.url}` : ""}\n   ${r.snippet}`
+  );
+
+  return `Found ${results.length} book result(s) for "${query}" (showing top ${top.length}):\n\n${lines.join("\n\n")}`;
+}
+
+export function listBookChapters(book: BookContent): string {
+  if (book.chapters.size === 0) {
+    return "No book chapters found. The book documentation may not be loaded yet.";
+  }
+
+  // Group by category
+  const byCategory = new Map<string, BookChapter[]>();
+  for (const [, ch] of book.chapters) {
+    const existing = byCategory.get(ch.category) || [];
+    existing.push(ch);
+    byCategory.set(ch.category, existing);
+  }
+
+  const sections: string[] = [];
+  for (const [category, chapters] of byCategory) {
+    const lines = chapters.map(
+      (ch) => `  - **${ch.title}** (slug: ${ch.slug})\n    ${ch.url}`
+    );
+    sections.push(`### ${category}\n${lines.join("\n")}`);
+  }
+
+  return `# Recon Book — ${book.chapters.size} chapters\n\n${sections.join("\n\n")}`;
+}
+
+export function searchAll(
+  content: ParsedContent,
+  book: BookContent,
+  query: string
+): string {
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (queryTerms.length === 0) return "No query provided.";
+
+  interface UnifiedResult {
+    source: string;
+    type: string;
+    title: string;
+    snippet: string;
+    score: number;
+  }
+
+  const results: UnifiedResult[] = [];
+
+  // Marketing site content
+  for (const [, post] of content.blogPosts) {
+    const text = `${post.title} ${post.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "site", type: "blog", title: post.title, snippet: snippet(post.content), score: s });
+    }
+  }
+
+  for (const [, term] of content.glossary) {
+    const text = `${term.term} ${term.definition}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "site", type: "glossary", title: term.term, snippet: snippet(term.definition), score: s });
+    }
+  }
+
+  for (const [, comp] of content.comparisons) {
+    const text = `${comp.title} ${comp.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "site", type: "comparison", title: comp.title, snippet: snippet(comp.content), score: s });
+    }
+  }
+
+  for (const tool of content.tools) {
+    const text = `${tool.name} ${tool.description}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "site", type: "tool", title: tool.name, snippet: snippet(tool.description), score: s });
+    }
+  }
+
+  // Book content
+  for (const [, ch] of book.chapters) {
+    const text = `${ch.title} ${ch.category} ${ch.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "book", type: "chapter", title: ch.title, snippet: snippet(ch.content), score: s });
+    }
+  }
+
+  for (const [, concept] of book.concepts) {
+    const text = `${concept.title} ${concept.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "book", type: "concept", title: concept.title, snippet: snippet(concept.content), score: s });
+    }
+  }
+
+  for (const [, faq] of book.faqs) {
+    const text = `${faq.question} ${faq.answer}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "book", type: "faq", title: faq.question, snippet: snippet(faq.answer), score: s });
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  const top = results.slice(0, 15);
+
+  if (top.length === 0) {
+    return `No results found for "${query}" across all Recon content.`;
+  }
+
+  const lines = top.map(
+    (r, i) =>
+      `${i + 1}. [${r.source.toUpperCase()}:${r.type.toUpperCase()}] **${r.title}** (score: ${r.score.toFixed(1)})\n   ${r.snippet}`
+  );
+
+  return `Found ${results.length} result(s) for "${query}" across all sources (showing top ${top.length}):\n\n${lines.join("\n\n")}`;
 }
