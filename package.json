@@ -6,6 +6,7 @@
   "bin": {
     "recon-mcp-knowledge": "dist/index.js"
   },
+  "files": ["dist"],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js"

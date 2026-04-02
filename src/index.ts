@@ -336,8 +336,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Prefetch both sources on startup (non-blocking)
 Promise.all([
-  getSiteContent().catch((err) => console.error("Failed to prefetch site:", err)),
-  getBookContent().catch((err) => console.error("Failed to prefetch book:", err)),
+  getSiteContent().catch(() => console.error("Failed to prefetch site content")),
+  getBookContent().catch(() => console.error("Failed to prefetch book content")),
 ]);
 
 async function main() {
@@ -345,7 +345,7 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
+main().catch(() => {
+  console.error("Fatal error starting server");
   process.exit(1);
 });

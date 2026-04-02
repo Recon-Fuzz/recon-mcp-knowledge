@@ -73,7 +73,7 @@ export function getBlogPost(
 
   // Fuzzy match: check if slug is contained in any key
   for (const [key, p] of content.blogPosts) {
-    if (key.includes(slug) || slug.includes(key)) {
+    if (key.includes(slug)) {
       return formatBlogPost(p);
     }
   }
@@ -115,7 +115,7 @@ export function getComparison(
 
   // Fuzzy match
   for (const [key, c] of content.comparisons) {
-    if (key.includes(slug) || slug.includes(key)) {
+    if (key.includes(slug)) {
       return formatComparison(c);
     }
   }
@@ -253,7 +253,7 @@ export function getBookChapter(
 
   // Fuzzy match
   for (const [key, ch] of book.chapters) {
-    if (key.includes(slug) || slug.includes(key)) {
+    if (key.includes(slug)) {
       return formatBookChapter(ch);
     }
   }
@@ -281,7 +281,7 @@ export function getBookConcept(
 
   // Fuzzy match
   for (const [key, c] of book.concepts) {
-    if (key.includes(slug) || slug.includes(key)) {
+    if (key.includes(slug)) {
       return `# ${c.title}\n\n${c.content}`;
     }
   }

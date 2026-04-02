@@ -72,6 +72,9 @@ function parseBlogPosts(section: string): Map<string, BlogPost> {
       metadata[metaMatch[1].trim()] = metaMatch[2].trim();
     }
 
+    if (posts.has(slug)) {
+      console.error(`Warning: duplicate blog slug "${slug}", overwriting previous entry`);
+    }
     posts.set(slug, {
       title,
       slug,
@@ -95,11 +98,14 @@ function parseGlossary(section: string): Map<string, GlossaryTerm> {
     if (!termMatch) continue;
 
     const term = termMatch[1].trim();
-    const definition = block
-      .slice(block.indexOf("\n") + 1)
-      .trim();
+    const nlIdx = block.indexOf("\n");
+    const definition = nlIdx === -1 ? "" : block.slice(nlIdx + 1).trim();
 
-    glossary.set(term.toLowerCase(), {
+    const termKey = term.toLowerCase();
+    if (glossary.has(termKey)) {
+      console.error(`Warning: duplicate glossary term "${term}", overwriting previous entry`);
+    }
+    glossary.set(termKey, {
       term,
       definition,
     });
@@ -165,6 +171,9 @@ function parseComparisons(section: string): Map<string, Comparison> {
     );
     const faqs = faqMatch?.[1]?.trim() ?? "";
 
+    if (comparisons.has(slug)) {
+      console.error(`Warning: duplicate comparison slug "${slug}", overwriting previous entry`);
+    }
     comparisons.set(slug, {
       title,
       slug,
@@ -253,11 +262,21 @@ export function parseDocument(rawText: string): ParsedContent {
             result.blogPosts.set(k, v);
           }
         }
+        // Check for comparison-like content (has "vs" in #### headings)
+        if (trimmed.match(/^#### /m) && trimmed.match(/ vs\.? /i)) {
+          for (const [k, v] of parseComparisons(trimmed)) {
+            result.comparisons.set(k, v);
+          }
+        }
         // Check for glossary-like content
-        if (trimmed.match(/^#### /m) && !trimmed.match(/ vs\.? /i)) {
+        else if (trimmed.match(/^#### /m)) {
           for (const [k, v] of parseGlossary(trimmed)) {
             result.glossary.set(k, v);
           }
+        }
+        // Check for tool-like content
+        if (trimmed.match(/- \*\*.+?\*\*/)) {
+          result.tools.push(...parseTools(trimmed));
         }
         break;
     }
