@@ -2,6 +2,8 @@
 
 MCP server that makes Recon documentation searchable by AI tools. Fetches and parses [getrecon.xyz/llms-full.txt](https://getrecon.xyz/llms-full.txt) into structured, queryable content.
 
+> **Ready to publish?** See [MCP_ACTIVATION.md](MCP_ACTIVATION.md) for the full guide — npm publish, directory listings, llms.txt integration, and Claude Desktop/Cursor setup.
+
 ## Tools
 
 | Tool | Input | Returns |
