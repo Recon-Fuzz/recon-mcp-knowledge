@@ -17,9 +17,12 @@ import {
 
 const DOCS_URL = "https://getrecon.xyz/llms-full.txt";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_RESPONSE_SIZE = 10 * 1024 * 1024; // 10 MB
+const REFRESH_MIN_INTERVAL_MS = 60 * 1000; // 60 seconds
 
 let cachedContent: ParsedContent | null = null;
 let lastFetchTime = 0;
+let lastRefreshRequest = 0;
 
 async function fetchWithRetry(
   url: string,
@@ -28,15 +31,19 @@ async function fetchWithRetry(
 ): Promise<string> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { redirect: "error" });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const contentLength = parseInt(response.headers.get('content-length') || '0');
+      if (contentLength > MAX_RESPONSE_SIZE) {
+        throw new Error(`Response too large: ${contentLength} bytes (max ${MAX_RESPONSE_SIZE})`);
       }
       return await response.text();
     } catch (err) {
       if (attempt === retries) {
         throw new Error(
-          `Failed to fetch ${url} after ${retries} attempts: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to fetch documentation after ${retries} attempts. The upstream service may be temporarily unavailable.`
         );
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
@@ -59,6 +66,11 @@ async function getContent(): Promise<ParsedContent> {
 }
 
 async function refreshCache(): Promise<string> {
+  const now = Date.now();
+  if (now - lastRefreshRequest < REFRESH_MIN_INTERVAL_MS) {
+    return `Cache refresh rate limited. Please wait at least 60 seconds between refreshes.`;
+  }
+  lastRefreshRequest = now;
   cachedContent = null;
   lastFetchTime = 0;
   await getContent();
@@ -178,6 +190,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [{ type: "text" as const, text: "Error: 'query' parameter is required." }],
           };
         }
+        if (query.length > 1000) {
+          return {
+            content: [{ type: "text" as const, text: "Error: 'query' parameter exceeds maximum length of 1000 characters." }],
+          };
+        }
         const content = await getContent();
         const result = searchGlossary(content, query);
         return { content: [{ type: "text" as const, text: result }] };
@@ -188,6 +205,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!slug) {
           return {
             content: [{ type: "text" as const, text: "Error: 'slug' parameter is required." }],
+          };
+        }
+        if (slug.length > 500) {
+          return {
+            content: [{ type: "text" as const, text: "Error: 'slug' parameter exceeds maximum length of 500 characters." }],
           };
         }
         const content = await getContent();
@@ -202,6 +224,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [{ type: "text" as const, text: "Error: 'slug' parameter is required." }],
           };
         }
+        if (slug.length > 500) {
+          return {
+            content: [{ type: "text" as const, text: "Error: 'slug' parameter exceeds maximum length of 500 characters." }],
+          };
+        }
         const content = await getContent();
         const result = getComparison(content, slug);
         return { content: [{ type: "text" as const, text: result }] };
@@ -212,6 +239,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!query) {
           return {
             content: [{ type: "text" as const, text: "Error: 'query' parameter is required." }],
+          };
+        }
+        if (query.length > 1000) {
+          return {
+            content: [{ type: "text" as const, text: "Error: 'query' parameter exceeds maximum length of 1000 characters." }],
           };
         }
         const content = await getContent();

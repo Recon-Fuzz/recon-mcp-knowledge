@@ -35,7 +35,6 @@ export interface ParsedContent {
   glossary: Map<string, GlossaryTerm>;
   comparisons: Map<string, Comparison>;
   tools: DevTool[];
-  rawSections: string[];
 }
 
 function slugify(text: string): string {
@@ -117,17 +116,39 @@ function parseComparisons(section: string): Map<string, Comparison> {
     const title = titleMatch[1].trim();
     const slug = slugify(title);
 
-    // Try to extract "X vs Y" pattern
-    const vsMatch = title.match(/(.+?)\s+vs\.?\s+(.+)/i);
-    const entityA = vsMatch?.[1]?.trim() ?? title;
-    const entityB = vsMatch?.[2]?.trim() ?? "";
+    // Try to extract "X vs Y" pattern using indexOf to avoid ReDoS
+    let entityA = title;
+    let entityB = "";
+    const vsIdx = title.search(/\svs\.?\s/i);
+    if (vsIdx >= 0) {
+      const vsMatch = title.match(/\s(vs\.?)\s/i);
+      entityA = title.slice(0, vsIdx).trim();
+      entityB = title.slice(vsIdx + (vsMatch ? vsMatch[0].length : 4)).trim();
+    }
 
-    // Extract strengths sections
-    const strengthsAMatch = block.match(
-      /(?:strengths?|advantages?|pros?)\s+(?:of\s+)?(?:.*?)(?=strengths?|advantages?|pros?|conclusion|faqs?|$)/is
-    );
-    const strengthsA = strengthsAMatch?.[0]?.trim() ?? "";
-    const strengthsB = "";
+    // Extract strengths sections for both entities
+    const strengthsRegex = /(?:#+\s*)?(?:strengths?|advantages?|pros?)\s+(?:of\s+)?(.+?)[\s:]*\n([\s\S]*?)(?=(?:#+\s*)?(?:strengths?|advantages?|pros?|conclusion|faqs?)|$)/gi;
+    let strengthsA = "";
+    let strengthsB = "";
+    let strengthMatch;
+    let strengthIdx = 0;
+    while ((strengthMatch = strengthsRegex.exec(block)) !== null) {
+      if (strengthIdx === 0) {
+        strengthsA = strengthMatch[2]?.trim() ?? "";
+      } else if (strengthIdx === 1) {
+        strengthsB = strengthMatch[2]?.trim() ?? "";
+      }
+      strengthIdx++;
+    }
+    // Fallback: try a simpler split if regex didn't find two sections
+    if (strengthsA && !strengthsB && entityB) {
+      const strengthSections = block.split(/(?:#+\s*)?(?:strengths?|advantages?|pros?)\s+(?:of\s+)?/i);
+      if (strengthSections.length >= 3) {
+        const sectionB = strengthSections[2];
+        const endMatch = sectionB.search(/(?:#+\s*)?(?:conclusion|faqs?)/i);
+        strengthsB = (endMatch >= 0 ? sectionB.slice(0, endMatch) : sectionB).trim();
+      }
+    }
 
     // Extract conclusion
     const conclusionMatch = block.match(
@@ -194,7 +215,6 @@ export function parseDocument(rawText: string): ParsedContent {
     glossary: new Map(),
     comparisons: new Map(),
     tools: [],
-    rawSections: sections,
   };
 
   for (const section of sections) {
