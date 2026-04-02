@@ -28,32 +28,48 @@ const SUBSTACK_BASE = "https://getrecon.substack.com";
 const MAX_RESPONSE_SIZE = 10 * 1024 * 1024;
 
 function stripHtml(html: string): string {
-  return html
-    // Remove script/style blocks
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    // Convert common block elements to newlines
-    .replace(/<\/?(p|div|br|h[1-6]|li|blockquote|pre|tr)[^>]*>/gi, "\n")
-    // Convert links to markdown-style
-    .replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)")
-    // Convert bold/strong
-    .replace(/<\/?(?:b|strong)[^>]*>/gi, "**")
-    // Convert italic/em
-    .replace(/<\/?(?:i|em)[^>]*>/gi, "*")
-    // Convert code
-    .replace(/<\/?code[^>]*>/gi, "`")
-    // Strip all remaining tags
-    .replace(/<[^>]+>/g, "")
-    // Decode common HTML entities
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    // Clean up whitespace
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let text = html;
+
+  // 1. Remove script/style blocks first (before any entity decoding)
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, "");
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, "");
+
+  // 2. Decode HTML entities BEFORE stripping tags
+  //    (prevents double-encoded entities like &amp;lt;script&amp;gt; from surviving tag removal)
+  text = text.replace(/&amp;/g, "&");
+  text = text.replace(/&lt;/g, "<");
+  text = text.replace(/&gt;/g, ">");
+  text = text.replace(/&quot;/g, '"');
+  text = text.replace(/&#39;/g, "'");
+  text = text.replace(/&nbsp;/g, " ");
+
+  // 3. Second pass: remove any tags that emerged from entity decoding
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, "");
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, "");
+
+  // 4. Convert block elements to newlines
+  text = text.replace(/<\/?(p|div|br|h[1-6]|li|blockquote|pre|tr)[^>]*>/gi, "\n");
+
+  // 5. Convert links — filter out javascript: URIs
+  text = text.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_match, href: string, linkText: string) => {
+    if (/^\s*javascript\s*:/i.test(href)) return linkText;
+    if (/^\s*data\s*:/i.test(href)) return linkText;
+    if (/^\s*vbscript\s*:/i.test(href)) return linkText;
+    return `[${linkText}](${href})`;
+  });
+
+  // 6. Convert inline formatting
+  text = text.replace(/<\/?(?:b|strong)[^>]*>/gi, "**");
+  text = text.replace(/<\/?(?:i|em)[^>]*>/gi, "*");
+  text = text.replace(/<\/?code[^>]*>/gi, "`");
+
+  // 7. Strip ALL remaining tags
+  text = text.replace(/<[^>]+>/g, "");
+
+  // 8. Clean up whitespace
+  text = text.replace(/\n{3,}/g, "\n\n");
+
+  return text.trim();
 }
 
 interface SubstackApiPost {
@@ -68,6 +84,34 @@ interface SubstackApiPost {
   wordcount?: number;
 }
 
+// Read response body with streaming byte limit (prevents OOM on chunked responses)
+async function readBodyWithLimit(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = parseInt(response.headers.get("content-length") || "0");
+  if (contentLength > maxBytes) {
+    throw new Error(`Response too large: ${contentLength} bytes (max ${maxBytes})`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) return await response.text();
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      reader.cancel();
+      throw new Error(`Response exceeded ${maxBytes} byte limit during streaming`);
+    }
+    chunks.push(value);
+  }
+
+  const decoder = new TextDecoder();
+  return chunks.map((c) => decoder.decode(c, { stream: true })).join("") + decoder.decode();
+}
+
 async function fetchJson(url: string, retries = 3): Promise<unknown> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -75,15 +119,12 @@ async function fetchJson(url: string, retries = 3): Promise<unknown> {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      const contentLength = parseInt(response.headers.get("content-length") || "0");
-      if (contentLength > MAX_RESPONSE_SIZE) {
-        throw new Error(`Response too large: ${contentLength} bytes`);
-      }
-      return await response.json();
+      const text = await readBodyWithLimit(response, MAX_RESPONSE_SIZE);
+      return JSON.parse(text);
     } catch (err) {
       if (attempt === retries) {
         throw new Error(
-          `Failed to fetch ${url} after ${retries} attempts: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to fetch after ${retries} attempts: ${err instanceof Error ? err.message : String(err)}`
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));

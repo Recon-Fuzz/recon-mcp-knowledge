@@ -41,6 +41,38 @@ let lastBookFetch = 0;
 let lastSubstackFetch = 0;
 let lastRefreshRequest = 0;
 
+// Read response body with a hard byte limit (handles chunked transfer encoding)
+async function readBodyWithLimit(response: Response, maxBytes: number): Promise<string> {
+  // Fast path: Content-Length header present
+  const contentLength = parseInt(response.headers.get("content-length") || "0");
+  if (contentLength > maxBytes) {
+    throw new Error(`Response too large: ${contentLength} bytes (max ${maxBytes})`);
+  }
+
+  // Streaming path: enforce limit on actual bytes read (handles chunked responses)
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return await response.text();
+  }
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      reader.cancel();
+      throw new Error(`Response exceeded ${maxBytes} byte limit during streaming`);
+    }
+    chunks.push(value);
+  }
+
+  const decoder = new TextDecoder();
+  return chunks.map((c) => decoder.decode(c, { stream: true })).join("") + decoder.decode();
+}
+
 async function fetchWithRetry(
   url: string,
   retries: number = 3,
@@ -52,15 +84,11 @@ async function fetchWithRetry(
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      const contentLength = parseInt(response.headers.get("content-length") || "0");
-      if (contentLength > MAX_RESPONSE_SIZE) {
-        throw new Error(`Response too large: ${contentLength} bytes (max ${MAX_RESPONSE_SIZE})`);
-      }
-      return await response.text();
+      return await readBodyWithLimit(response, MAX_RESPONSE_SIZE);
     } catch (err) {
       if (attempt === retries) {
         throw new Error(
-          `Failed to fetch ${url} after ${retries} attempts. The upstream service may be temporarily unavailable.`
+          `Failed to fetch after ${retries} attempts. The upstream service may be temporarily unavailable.`
         );
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
@@ -69,13 +97,27 @@ async function fetchWithRetry(
   throw new Error("Unreachable");
 }
 
+// Content validation: reject empty/error-page responses before caching
+function validateSiteContent(rawText: string): void {
+  if (rawText.length < 500) throw new Error("Response too short — likely an error page");
+  if (!rawText.includes("Recon")) throw new Error("Response does not contain expected content markers");
+}
+
+function validateBookContent(rawText: string): void {
+  if (rawText.length < 200) throw new Error("Response too short — likely an error page");
+  if (!rawText.includes("##")) throw new Error("Response does not contain expected markdown structure");
+}
+
 async function getSiteContent(): Promise<ParsedContent> {
   const now = Date.now();
   if (cachedSiteContent && now - lastSiteFetch < CACHE_TTL_MS) {
     return cachedSiteContent;
   }
   const rawText = await fetchWithRetry(SITE_URL);
-  cachedSiteContent = parseDocument(rawText);
+  validateSiteContent(rawText);
+  // Atomic swap: parse into temp, then assign only on success
+  const newContent = parseDocument(rawText);
+  cachedSiteContent = newContent;
   lastSiteFetch = now;
   return cachedSiteContent;
 }
@@ -87,10 +129,12 @@ async function getBookContent(): Promise<BookContent> {
   }
   try {
     const rawText = await fetchWithRetry(BOOK_URL);
-    cachedBookContent = parseBookDocument(rawText);
+    validateBookContent(rawText);
+    const newContent = parseBookDocument(rawText);
+    cachedBookContent = newContent;
     lastBookFetch = now;
   } catch {
-    // Book URL may not be deployed yet — return empty content
+    // Book URL may not be deployed yet — keep existing cache or return empty
     if (!cachedBookContent) {
       cachedBookContent = { chapters: new Map(), concepts: new Map(), faqs: new Map(), overview: "" };
     }
@@ -104,7 +148,13 @@ async function getSubstackContent(): Promise<SubstackContent> {
     return cachedSubstackContent;
   }
   try {
-    cachedSubstackContent = await fetchSubstackContent();
+    const newContent = await fetchSubstackContent();
+    // Validate: substack should have at least a few posts
+    if (newContent.posts.size === 0 && cachedSubstackContent && cachedSubstackContent.posts.size > 0) {
+      // Upstream returned empty but we had valid data — keep existing cache
+      return cachedSubstackContent;
+    }
+    cachedSubstackContent = newContent;
     lastSubstackFetch = now;
   } catch {
     if (!cachedSubstackContent) {
@@ -120,32 +170,42 @@ async function refreshCache(): Promise<string> {
     return "Cache refresh rate limited. Please wait at least 60 seconds between refreshes.";
   }
   lastRefreshRequest = now;
-  cachedSiteContent = null;
-  cachedBookContent = null;
-  cachedSubstackContent = null;
-  lastSiteFetch = 0;
-  lastBookFetch = 0;
-  lastSubstackFetch = 0;
 
+  // Atomic refresh: fetch new data first, only replace cache on success
+  // (preserves existing valid cache if refresh fails)
   const results: string[] = [];
+
   try {
-    await getSiteContent();
+    const rawText = await fetchWithRetry(SITE_URL);
+    validateSiteContent(rawText);
+    cachedSiteContent = parseDocument(rawText);
+    lastSiteFetch = now;
     results.push("Site content refreshed.");
   } catch (err) {
     results.push(`Site content failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+
   try {
-    await getBookContent();
+    const rawText = await fetchWithRetry(BOOK_URL);
+    validateBookContent(rawText);
+    cachedBookContent = parseBookDocument(rawText);
+    lastBookFetch = now;
     results.push("Book content refreshed.");
   } catch (err) {
     results.push(`Book content failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+
   try {
-    const sub = await getSubstackContent();
-    results.push(`Substack refreshed (${sub.posts.size} posts).`);
+    const newSubstack = await fetchSubstackContent();
+    if (newSubstack.posts.size > 0 || !cachedSubstackContent) {
+      cachedSubstackContent = newSubstack;
+      lastSubstackFetch = now;
+    }
+    results.push(`Substack refreshed (${cachedSubstackContent?.posts.size ?? 0} posts).`);
   } catch (err) {
     results.push(`Substack failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+
   return results.join(" ");
 }
 
@@ -158,7 +218,7 @@ function validateString(value: unknown, name: string, maxLen: number = 1000): st
 
 // ─── Server ─────────────────────────────────────────────────────────────
 const server = new Server(
-  { name: "recon-mcp-knowledge", version: "2.0.0" },
+  { name: "recon-mcp-knowledge", version: "2.1.1" },
   { capabilities: { tools: {} } }
 );
 

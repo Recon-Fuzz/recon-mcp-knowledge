@@ -1,6 +1,6 @@
 {
   "name": "@recon-fuzz/mcp-knowledge",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "MCP server for all Recon knowledge — getrecon.xyz, book.getrecon.xyz, and getrecon.substack.com",
   "type": "module",
   "bin": {

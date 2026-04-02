@@ -114,6 +114,57 @@ function parseGlossary(section: string): Map<string, GlossaryTerm> {
   return glossary;
 }
 
+// Iterative section extractor — replaces ReDoS-prone regexes
+const SECTION_MARKERS = ["strengths", "advantages", "pros", "conclusion", "faq", "frequently asked"] as const;
+
+function classifyLine(line: string): string | null {
+  const stripped = line.replace(/^#+\s*/, "").toLowerCase().trim();
+  for (const marker of SECTION_MARKERS) {
+    if (stripped.startsWith(marker)) {
+      if (marker === "conclusion") return "conclusion";
+      if (marker === "faq" || marker === "frequently asked") return "faq";
+      return "strengths";
+    }
+  }
+  return null;
+}
+
+function extractComparisonSections(block: string): {
+  strengthsA: string; strengthsB: string; conclusion: string; faqs: string;
+} {
+  const lines = block.split("\n");
+  let currentSection: string | null = null;
+  const sections: { type: string; lines: string[] }[] = [];
+  let currentLines: string[] = [];
+
+  for (const line of lines) {
+    const sectionType = classifyLine(line);
+    if (sectionType) {
+      if (currentSection) {
+        sections.push({ type: currentSection, lines: currentLines });
+      }
+      currentSection = sectionType;
+      currentLines = [];
+    } else if (currentSection) {
+      currentLines.push(line);
+    }
+  }
+  if (currentSection) {
+    sections.push({ type: currentSection, lines: currentLines });
+  }
+
+  const strengthsSections = sections.filter((s) => s.type === "strengths");
+  const conclusionSection = sections.find((s) => s.type === "conclusion");
+  const faqSection = sections.find((s) => s.type === "faq");
+
+  return {
+    strengthsA: strengthsSections[0]?.lines.join("\n").trim() ?? "",
+    strengthsB: strengthsSections[1]?.lines.join("\n").trim() ?? "",
+    conclusion: conclusionSection?.lines.join("\n").trim() ?? "",
+    faqs: faqSection?.lines.join("\n").trim() ?? "",
+  };
+}
+
 function parseComparisons(section: string): Map<string, Comparison> {
   const comparisons = new Map<string, Comparison>();
   const compBlocks = section.split(/(?=^#### )/m);
@@ -135,41 +186,9 @@ function parseComparisons(section: string): Map<string, Comparison> {
       entityB = title.slice(vsIdx + (vsMatch ? vsMatch[0].length : 4)).trim();
     }
 
-    // Extract strengths sections for both entities
-    const strengthsRegex = /(?:#+\s*)?(?:strengths?|advantages?|pros?)\s+(?:of\s+)?(.+?)[\s:]*\n([\s\S]*?)(?=(?:#+\s*)?(?:strengths?|advantages?|pros?|conclusion|faqs?)|$)/gi;
-    let strengthsA = "";
-    let strengthsB = "";
-    let strengthMatch;
-    let strengthIdx = 0;
-    while ((strengthMatch = strengthsRegex.exec(block)) !== null) {
-      if (strengthIdx === 0) {
-        strengthsA = strengthMatch[2]?.trim() ?? "";
-      } else if (strengthIdx === 1) {
-        strengthsB = strengthMatch[2]?.trim() ?? "";
-      }
-      strengthIdx++;
-    }
-    // Fallback: try a simpler split if regex didn't find two sections
-    if (strengthsA && !strengthsB && entityB) {
-      const strengthSections = block.split(/(?:#+\s*)?(?:strengths?|advantages?|pros?)\s+(?:of\s+)?/i);
-      if (strengthSections.length >= 3) {
-        const sectionB = strengthSections[2];
-        const endMatch = sectionB.search(/(?:#+\s*)?(?:conclusion|faqs?)/i);
-        strengthsB = (endMatch >= 0 ? sectionB.slice(0, endMatch) : sectionB).trim();
-      }
-    }
-
-    // Extract conclusion
-    const conclusionMatch = block.match(
-      /(?:^|\n)(?:#+\s*)?conclusion[:\s]*\n([\s\S]*?)(?=(?:^|\n)(?:#+\s*)?(?:faq|$))/im
-    );
-    const conclusion = conclusionMatch?.[1]?.trim() ?? "";
-
-    // Extract FAQs
-    const faqMatch = block.match(
-      /(?:^|\n)(?:#+\s*)?(?:faqs?|frequently asked)[:\s]*\n([\s\S]*?)$/im
-    );
-    const faqs = faqMatch?.[1]?.trim() ?? "";
+    // Extract strengths, conclusion, FAQs using iterative line-based parsing
+    // (avoids ReDoS from complex regex with nested quantifiers on untrusted input)
+    const { strengthsA, strengthsB, conclusion, faqs } = extractComparisonSections(block);
 
     if (comparisons.has(slug)) {
       console.error(`Warning: duplicate comparison slug "${slug}", overwriting previous entry`);
