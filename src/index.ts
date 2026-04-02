@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { parseDocument, type ParsedContent } from "./parser.js";
 import { parseBookDocument, type BookContent } from "./book-parser.js";
+import { fetchSubstackContent, type SubstackContent } from "./substack-parser.js";
 import {
   searchGlossary,
   getBlogPost,
@@ -18,6 +19,9 @@ import {
   getBookConcept,
   searchBook,
   listBookChapters,
+  getSubstackPost,
+  searchSubstack,
+  listSubstackPosts,
   searchAll,
 } from "./tools.js";
 
@@ -31,8 +35,10 @@ const REFRESH_MIN_INTERVAL_MS = 60 * 1000; // 60 seconds
 // ─── Cache state ────────────────────────────────────────────────────────
 let cachedSiteContent: ParsedContent | null = null;
 let cachedBookContent: BookContent | null = null;
+let cachedSubstackContent: SubstackContent | null = null;
 let lastSiteFetch = 0;
 let lastBookFetch = 0;
+let lastSubstackFetch = 0;
 let lastRefreshRequest = 0;
 
 async function fetchWithRetry(
@@ -92,6 +98,22 @@ async function getBookContent(): Promise<BookContent> {
   return cachedBookContent;
 }
 
+async function getSubstackContent(): Promise<SubstackContent> {
+  const now = Date.now();
+  if (cachedSubstackContent && now - lastSubstackFetch < CACHE_TTL_MS) {
+    return cachedSubstackContent;
+  }
+  try {
+    cachedSubstackContent = await fetchSubstackContent();
+    lastSubstackFetch = now;
+  } catch {
+    if (!cachedSubstackContent) {
+      cachedSubstackContent = { posts: new Map() };
+    }
+  }
+  return cachedSubstackContent;
+}
+
 async function refreshCache(): Promise<string> {
   const now = Date.now();
   if (now - lastRefreshRequest < REFRESH_MIN_INTERVAL_MS) {
@@ -100,8 +122,10 @@ async function refreshCache(): Promise<string> {
   lastRefreshRequest = now;
   cachedSiteContent = null;
   cachedBookContent = null;
+  cachedSubstackContent = null;
   lastSiteFetch = 0;
   lastBookFetch = 0;
+  lastSubstackFetch = 0;
 
   const results: string[] = [];
   try {
@@ -115,6 +139,12 @@ async function refreshCache(): Promise<string> {
     results.push("Book content refreshed.");
   } catch (err) {
     results.push(`Book content failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const sub = await getSubstackContent();
+    results.push(`Substack refreshed (${sub.posts.size} posts).`);
+  } catch (err) {
+    results.push(`Substack failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   return results.join(" ");
 }
@@ -217,10 +247,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: [],
       },
     },
+    // ── Substack tools (getrecon.substack.com) ──────────────────────
+    {
+      name: "get_substack_post",
+      description: "Get a full Substack post by slug. Returns title, author, date, and full article content. Source: getrecon.substack.com (36 posts on invariant testing, fuzzing, engagement retrospectives, product updates).",
+      inputSchema: {
+        type: "object" as const,
+        properties: { slug: { type: "string", description: "The post slug (e.g. 'introducing-recon-magic', 'the-bug-that-was-missed', 'ebtc-retrospective')" } },
+        required: ["slug"],
+      },
+    },
+    {
+      name: "search_substack",
+      description: "Search across all Recon Substack posts. Returns top 10 matches with titles, dates, and content snippets.",
+      inputSchema: {
+        type: "object" as const,
+        properties: { query: { type: "string", description: "The search query" } },
+        required: ["query"],
+      },
+    },
+    {
+      name: "list_substack_posts",
+      description: "List all Recon Substack newsletter posts sorted by date. Shows title, subtitle, date, word count, and slug for each post.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {},
+        required: [],
+      },
+    },
     // ── Cross-source tools ─────────────────────────────────────────
     {
       name: "search_all",
-      description: "Search across ALL Recon content — both getrecon.xyz (blog, glossary, comparisons, tools) and book.getrecon.xyz (chapters, concepts, FAQs). Returns top 15 matches with source labels.",
+      description: "Search across ALL Recon content — getrecon.xyz (blog, glossary, comparisons, tools), book.getrecon.xyz (chapters, concepts, FAQs), and getrecon.substack.com (newsletter posts). Returns top 15 matches with source labels.",
       inputSchema: {
         type: "object" as const,
         properties: { query: { type: "string", description: "The search query" } },
@@ -229,7 +287,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "refresh_cache",
-      description: "Force refresh the documentation cache from both getrecon.xyz and book.getrecon.xyz. Rate limited to once per 60 seconds.",
+      description: "Force refresh the documentation cache from all three sources (getrecon.xyz, book.getrecon.xyz, getrecon.substack.com). Rate limited to once per 60 seconds.",
       inputSchema: {
         type: "object" as const,
         properties: {},
@@ -306,12 +364,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: "text" as const, text: listBookChapters(book) }] };
       }
 
+      // ── Substack tools ─────────────────────────────────────────
+      case "get_substack_post": {
+        const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const substack = await getSubstackContent();
+        return { content: [{ type: "text" as const, text: getSubstackPost(substack, (args as { slug: string }).slug) }] };
+      }
+
+      case "search_substack": {
+        const err = validateString((args as Record<string, unknown>).query, "query");
+        if (err) return { content: [{ type: "text" as const, text: err }] };
+        const substack = await getSubstackContent();
+        return { content: [{ type: "text" as const, text: searchSubstack(substack, (args as { query: string }).query) }] };
+      }
+
+      case "list_substack_posts": {
+        const substack = await getSubstackContent();
+        return { content: [{ type: "text" as const, text: listSubstackPosts(substack) }] };
+      }
+
       // ── Cross-source ────────────────────────────────────────────
       case "search_all": {
         const err = validateString((args as Record<string, unknown>).query, "query");
         if (err) return { content: [{ type: "text" as const, text: err }] };
-        const [content, book] = await Promise.all([getSiteContent(), getBookContent()]);
-        return { content: [{ type: "text" as const, text: searchAll(content, book, (args as { query: string }).query) }] };
+        const [content, book, substack] = await Promise.all([getSiteContent(), getBookContent(), getSubstackContent()]);
+        return { content: [{ type: "text" as const, text: searchAll(content, book, substack, (args as { query: string }).query) }] };
       }
 
       case "refresh_cache": {
@@ -334,10 +412,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Prefetch both sources on startup (non-blocking)
+// Prefetch all sources on startup (non-blocking)
 Promise.all([
   getSiteContent().catch(() => console.error("Failed to prefetch site content")),
   getBookContent().catch(() => console.error("Failed to prefetch book content")),
+  getSubstackContent().catch(() => console.error("Failed to prefetch substack content")),
 ]);
 
 async function main() {

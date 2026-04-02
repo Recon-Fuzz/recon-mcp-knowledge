@@ -1,5 +1,6 @@
 import type { ParsedContent, BlogPost, GlossaryTerm, Comparison, DevTool } from "./parser.js";
 import type { BookContent, BookChapter, BookConcept, BookFAQ } from "./book-parser.js";
+import type { SubstackContent, SubstackPost } from "./substack-parser.js";
 
 interface SearchResult {
   type: string;
@@ -391,9 +392,92 @@ export function listBookChapters(book: BookContent): string {
   return `# Recon Book — ${book.chapters.size} chapters\n\n${sections.join("\n\n")}`;
 }
 
+// ─── Substack tools ─────────────────────────────────────────────────────
+
+export function getSubstackPost(
+  substack: SubstackContent,
+  slug: string
+): string {
+  const post = substack.posts.get(slug);
+  if (post) return formatSubstackPost(post);
+
+  // Fuzzy match
+  for (const [key, p] of substack.posts) {
+    if (key.includes(slug) || slug.includes(key)) {
+      return formatSubstackPost(p);
+    }
+  }
+
+  const available = Array.from(substack.posts.values())
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map((p) => `  - ${p.slug} — ${p.title} (${p.date})`)
+    .slice(0, 20);
+  return `Substack post "${slug}" not found.\n\nAvailable posts:\n${available.join("\n")}`;
+}
+
+function formatSubstackPost(post: SubstackPost): string {
+  let result = `# ${post.title}\n\n`;
+  if (post.subtitle) result += `> ${post.subtitle}\n\n`;
+  result += `**Author:** ${post.author}\n`;
+  result += `**Date:** ${post.date}\n`;
+  result += `**URL:** ${post.url}\n`;
+  result += `**Words:** ${post.wordCount}\n\n`;
+  result += post.content;
+  return result;
+}
+
+export function searchSubstack(
+  substack: SubstackContent,
+  query: string
+): string {
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (queryTerms.length === 0) return "No query provided.";
+
+  const results: { post: SubstackPost; score: number }[] = [];
+
+  for (const [, post] of substack.posts) {
+    const text = `${post.title} ${post.subtitle} ${post.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ post, score: s });
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  const top = results.slice(0, 10);
+
+  if (top.length === 0) {
+    return `No substack posts found matching "${query}".`;
+  }
+
+  const lines = top.map(
+    (r, i) =>
+      `${i + 1}. **${r.post.title}** (${r.post.date}, score: ${r.score.toFixed(1)})\n   ${r.post.subtitle}\n   URL: ${r.post.url}\n   ${snippet(r.post.content, 200)}`
+  );
+
+  return `Found ${results.length} substack post(s) for "${query}" (showing top ${top.length}):\n\n${lines.join("\n\n")}`;
+}
+
+export function listSubstackPosts(substack: SubstackContent): string {
+  if (substack.posts.size === 0) {
+    return "No substack posts found.";
+  }
+
+  const sorted = Array.from(substack.posts.values())
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const lines = sorted.map(
+    (p, i) =>
+      `${i + 1}. **${p.title}** (${p.date})\n   ${p.subtitle}\n   slug: ${p.slug} | ${p.wordCount} words\n   ${p.url}`
+  );
+
+  return `# Recon Substack — ${sorted.length} posts\n\n${lines.join("\n\n")}`;
+}
+
 export function searchAll(
   content: ParsedContent,
   book: BookContent,
+  substack: SubstackContent,
   query: string
 ): string {
   const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -464,6 +548,15 @@ export function searchAll(
     const s = scoreMatch(text, queryTerms);
     if (s > 0) {
       results.push({ source: "book", type: "faq", title: faq.question, snippet: snippet(faq.answer), score: s });
+    }
+  }
+
+  // Substack content
+  for (const [, post] of substack.posts) {
+    const text = `${post.title} ${post.subtitle} ${post.content}`;
+    const s = scoreMatch(text, queryTerms);
+    if (s > 0) {
+      results.push({ source: "substack", type: "post", title: post.title, snippet: snippet(post.content), score: s });
     }
   }
 

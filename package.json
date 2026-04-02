@@ -1,7 +1,7 @@
 {
   "name": "@recon-fuzz/mcp-knowledge",
-  "version": "2.0.0",
-  "description": "MCP server that fetches and searches Recon documentation from getrecon.xyz and book.getrecon.xyz",
+  "version": "2.1.0",
+  "description": "MCP server for all Recon knowledge — getrecon.xyz, book.getrecon.xyz, and getrecon.substack.com",
   "type": "module",
   "bin": {
     "recon-mcp-knowledge": "dist/index.js"
