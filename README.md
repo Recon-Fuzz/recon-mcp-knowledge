@@ -1,5 +1,9 @@
 # @recon-fuzz/mcp-knowledge
 
+[![npm](https://img.shields.io/npm/v/@recon-fuzz/mcp-knowledge.svg)](https://www.npmjs.com/package/@recon-fuzz/mcp-knowledge)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node 18+](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
+
 MCP server that makes Recon documentation searchable by AI tools. Fetches and parses [getrecon.xyz/llms-full.txt](https://getrecon.xyz/llms-full.txt) into structured, queryable content.
 
 > **Ready to publish?** See [MCP_ACTIVATION.md](MCP_ACTIVATION.md) for the full guide — npm publish, directory listings, llms.txt integration, and Claude Desktop/Cursor setup.

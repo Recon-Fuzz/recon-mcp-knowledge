@@ -1,0 +1,51 @@
+# @recon-fuzz/mcp-knowledge
+
+> MCP server that makes Recon documentation searchable by AI tools.
+
+## Tools (14)
+
+### Site tools (getrecon.xyz)
+- search_glossary: Search glossary terms — returns top 5 matching terms with full definitions
+- get_blog_post: Get a blog post by slug — returns full content, metadata, and URL
+- get_comparison: Get a comparison article by slug — returns both entities, strengths, conclusion, FAQs
+- search_site: Search all site content — returns top 10 matches across blog posts, glossary, comparisons, tools
+- list_tools: List all developer tools — returns tool names, descriptions, and URLs
+
+### Book tools (book.getrecon.xyz)
+- get_book_chapter: Get a book chapter by slug — returns full content, category, URL
+- get_book_concept: Get a technical concept by slug — returns detailed explanation
+- search_book: Search book content — returns top 10 matches across chapters and concepts
+- list_book_chapters: List all book chapters — returns chapters grouped by category
+
+### Substack tools (getrecon.substack.com)
+- get_substack_post: Get a newsletter post by slug — returns full content
+- search_substack: Search Substack posts — returns top 10 matches
+- list_substack_posts: List all Substack posts — returns posts sorted by date
+
+### Cross-source
+- search_all: Search across all 3 sources — returns top 15 matches from site, book, and Substack
+- refresh_cache: Re-fetch all sources — rate limited to once per minute
+
+## Data sources
+- Site: https://getrecon.xyz/llms-full.txt
+- Book: https://book.getrecon.xyz/llms-full.txt
+- Substack: https://getrecon.substack.com (RSS feed)
+
+## Setup
+
+```json
+{
+  "mcpServers": {
+    "recon-knowledge": {
+      "command": "npx",
+      "args": ["@recon-fuzz/mcp-knowledge"]
+    }
+  }
+}
+```
+
+No API key needed. The server fetches public documentation only.
+
+## Privacy
+
+This server is read-only. It fetches from hardcoded public URLs only. No user queries, tool arguments, or any data is sent to Recon or any third party. No telemetry, no analytics, no tracking.
