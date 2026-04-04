@@ -365,21 +365,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ── Site tools ──────────────────────────────────────────────
       case "search_glossary": {
         const err = validateString((args as Record<string, unknown>).query, "query");
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const content = await getSiteContent();
         return { content: [{ type: "text" as const, text: searchGlossary(content, (args as { query: string }).query) }] };
       }
 
       case "get_blog_post": {
         const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const content = await getSiteContent();
         return { content: [{ type: "text" as const, text: getBlogPost(content, (args as { slug: string }).slug) }] };
       }
 
       case "get_comparison": {
         const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const content = await getSiteContent();
         return { content: [{ type: "text" as const, text: getComparison(content, (args as { slug: string }).slug) }] };
       }
@@ -387,7 +387,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "search_site":
       case "search_content": {
         const err = validateString((args as Record<string, unknown>).query, "query");
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const content = await getSiteContent();
         return { content: [{ type: "text" as const, text: searchContent(content, (args as { query: string }).query) }] };
       }
@@ -400,21 +400,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ── Book tools ──────────────────────────────────────────────
       case "get_book_chapter": {
         const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const book = await getBookContent();
         return { content: [{ type: "text" as const, text: getBookChapter(book, (args as { slug: string }).slug) }] };
       }
 
       case "get_book_concept": {
         const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const book = await getBookContent();
         return { content: [{ type: "text" as const, text: getBookConcept(book, (args as { slug: string }).slug) }] };
       }
 
       case "search_book": {
         const err = validateString((args as Record<string, unknown>).query, "query");
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const book = await getBookContent();
         return { content: [{ type: "text" as const, text: searchBook(book, (args as { query: string }).query) }] };
       }
@@ -427,14 +427,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ── Substack tools ─────────────────────────────────────────
       case "get_substack_post": {
         const err = validateString((args as Record<string, unknown>).slug, "slug", 500);
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const substack = await getSubstackContent();
         return { content: [{ type: "text" as const, text: getSubstackPost(substack, (args as { slug: string }).slug) }] };
       }
 
       case "search_substack": {
         const err = validateString((args as Record<string, unknown>).query, "query");
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const substack = await getSubstackContent();
         return { content: [{ type: "text" as const, text: searchSubstack(substack, (args as { query: string }).query) }] };
       }
@@ -447,7 +447,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ── Cross-source ────────────────────────────────────────────
       case "search_all": {
         const err = validateString((args as Record<string, unknown>).query, "query");
-        if (err) return { content: [{ type: "text" as const, text: err }] };
+        if (err) return { content: [{ type: "text" as const, text: err }], isError: true };
         const [content, book, substack] = await Promise.all([getSiteContent(), getBookContent(), getSubstackContent()]);
         return { content: [{ type: "text" as const, text: searchAll(content, book, substack, (args as { query: string }).query) }] };
       }

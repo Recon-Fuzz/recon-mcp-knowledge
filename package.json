@@ -7,9 +7,20 @@
     "recon-mcp-knowledge": "dist/index.js"
   },
   "files": ["dist"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Recon-Fuzz/recon-mcp-knowledge.git"
+  },
+  "homepage": "https://getrecon.xyz",
+  "keywords": ["mcp", "recon", "fuzzing", "security", "documentation", "chimera", "invariant-testing"],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"

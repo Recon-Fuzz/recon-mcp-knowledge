@@ -6,14 +6,31 @@ MCP server that makes Recon documentation searchable by AI tools. Fetches and pa
 
 ## Tools
 
+### Site tools (getrecon.xyz)
+
 | Tool | Input | Returns |
 |------|-------|---------|
 | `search_glossary` | `query: string` | Top 5 matching glossary terms with definitions |
 | `get_blog_post` | `slug: string` | Full post content + metadata + URL |
 | `get_comparison` | `slug: string` | Both entities, strengths, conclusion, FAQs |
-| `search_content` | `query: string` | Top 10 matches across all content types |
+| `search_site` | `query: string` | Top 10 matches across site content |
 | `list_tools` | _(none)_ | Developer tools with descriptions + URLs |
-| `refresh_cache` | _(none)_ | Force re-fetch of documentation (rate limited to 1/min) |
+
+### Book tools (book.getrecon.xyz)
+
+| Tool | Input | Returns |
+|------|-------|---------|
+| `get_book_chapter` | `slug: string` | Full chapter content, category, URL |
+| `get_book_concept` | `slug: string` | Technical concept explanation |
+| `search_book` | `query: string` | Top 10 matches across book content |
+| `list_book_chapters` | _(none)_ | All chapters grouped by category |
+
+### Cross-source
+
+| Tool | Input | Returns |
+|------|-------|---------|
+| `search_all` | `query: string` | Top 15 matches across site + book |
+| `refresh_cache` | _(none)_ | Re-fetch all sources (rate limited to 1/min) |
 
 ## Setup for Claude Desktop / Cursor
 
@@ -48,7 +65,7 @@ npm run build
 echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | node dist/index.js
 
 # Search for chimera content
-echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_content","arguments":{"query":"chimera"}},"id":2}' | node dist/index.js
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search_site","arguments":{"query":"chimera"}},"id":2}' | node dist/index.js
 ```
 
 ## Validation steps
@@ -58,10 +75,10 @@ Before making this repo public or publishing to npm, verify the following:
 ### 1. Functional checks
 
 - [ ] `npm run build` compiles with zero errors
-- [ ] `tools/list` returns 6 tools
+- [ ] `tools/list` returns 11 tools
 - [ ] `search_glossary` with query `"fuzzing"` returns relevant terms
 - [ ] `get_blog_post` with slug `"why-we-built-chimera-write-once-fuzz-everywhere"` returns the full post
-- [ ] `search_content` with query `"chimera"` returns the new Chimera architecture post
+- [ ] `search_site` with query `"chimera"` returns the new Chimera architecture post
 - [ ] `refresh_cache` works and respects rate limiting (second call within 60s returns early)
 - [ ] `get_comparison` returns both entities' strengths (not just entity A)
 
