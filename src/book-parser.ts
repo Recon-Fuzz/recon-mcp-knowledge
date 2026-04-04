@@ -38,15 +38,8 @@ export interface BookContent {
   overview: string;
 }
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .trim();
-}
+import { slugify } from "./utils.js";
+
 
 function parseChapters(text: string): Map<string, BookChapter> {
   const chapters = new Map<string, BookChapter>();

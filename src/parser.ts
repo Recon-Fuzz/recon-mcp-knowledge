@@ -1,3 +1,5 @@
+import { slugify } from "./utils.js";
+
 export interface BlogPost {
   title: string;
   slug: string;
@@ -40,14 +42,6 @@ export interface ParsedContent {
 // Re-export for convenience
 export type { BookContent, BookChapter, BookConcept, BookFAQ } from "./book-parser.js";
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .trim();
-}
 
 function parseBlogPosts(section: string): Map<string, BlogPost> {
   const posts = new Map<string, BlogPost>();

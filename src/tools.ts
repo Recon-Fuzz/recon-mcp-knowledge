@@ -403,7 +403,7 @@ export function getSubstackPost(
 
   // Fuzzy match
   for (const [key, p] of substack.posts) {
-    if (key.includes(slug) || slug.includes(key)) {
+    if (key.includes(slug)) {
       return formatSubstackPost(p);
     }
   }
