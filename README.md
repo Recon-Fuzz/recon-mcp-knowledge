@@ -25,11 +25,19 @@ MCP server that makes Recon documentation searchable by AI tools. Fetches and pa
 | `search_book` | `query: string` | Top 10 matches across book content |
 | `list_book_chapters` | _(none)_ | All chapters grouped by category |
 
+### Substack tools (getrecon.substack.com)
+
+| Tool | Input | Returns |
+|------|-------|---------|
+| `get_substack_post` | `slug: string` | Full newsletter post content |
+| `search_substack` | `query: string` | Top 10 matches across Substack posts |
+| `list_substack_posts` | _(none)_ | All posts sorted by date |
+
 ### Cross-source
 
 | Tool | Input | Returns |
 |------|-------|---------|
-| `search_all` | `query: string` | Top 15 matches across site + book |
+| `search_all` | `query: string` | Top 15 matches across all 3 sources |
 | `refresh_cache` | _(none)_ | Re-fetch all sources (rate limited to 1/min) |
 
 ## Setup for Claude Desktop / Cursor
@@ -75,7 +83,7 @@ Before making this repo public or publishing to npm, verify the following:
 ### 1. Functional checks
 
 - [ ] `npm run build` compiles with zero errors
-- [ ] `tools/list` returns 11 tools
+- [ ] `tools/list` returns 14 tools
 - [ ] `search_glossary` with query `"fuzzing"` returns relevant terms
 - [ ] `get_blog_post` with slug `"why-we-built-chimera-write-once-fuzz-everywhere"` returns the full post
 - [ ] `search_site` with query `"chimera"` returns the new Chimera architecture post
