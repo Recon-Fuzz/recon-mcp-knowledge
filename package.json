@@ -13,7 +13,9 @@
     "url": "https://github.com/Recon-Fuzz/recon-mcp-knowledge.git"
   },
   "homepage": "https://getrecon.xyz",
-  "keywords": ["mcp", "recon", "fuzzing", "security", "documentation", "chimera", "invariant-testing"],
+  "author": "Recon Fuzz",
+  "bugs": "https://github.com/Recon-Fuzz/recon-mcp-knowledge/issues",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "recon", "fuzzing", "security", "documentation", "chimera", "invariant-testing", "ai", "claude"],
   "engines": {
     "node": ">=18"
   },

@@ -4,64 +4,127 @@ How to go from a private repo to a live MCP server that AI tools discover and us
 
 ## Step 1: Claim the npm scope (one-time)
 
-The `@recon-fuzz` scope needs to exist on npm before any package can be published under it.
-
 ```bash
-# Create the npm org (needs an npm account with org creation rights)
 npm org create recon-fuzz
-
-# Add team members who should be able to publish
 npm team add recon-fuzz:developers alex
 npm team add recon-fuzz:developers deivitto
 ```
-
-If the org already exists, skip this step.
 
 ## Step 2: Publish to npm
 
 ```bash
 cd /path/to/recon-mcp-knowledge  # or chimera, or pro
 npm login
-npm run build
 npm publish --access public      # use --access restricted for recon-mcp-pro
 ```
 
-After publishing, verify it works:
+Verify: `npx @recon-fuzz/mcp-knowledge` should start and wait for MCP input.
 
-```bash
-npx @recon-fuzz/mcp-knowledge    # should start and wait for MCP input on stdin
-```
-
-For updates, bump the version in package.json and publish again:
-
+For updates:
 ```bash
 npm version patch   # or minor/major
-npm run build
 npm publish
 ```
 
-## Step 3: Make the GitHub repo public (knowledge + chimera only)
+## Step 3: Publish to the official MCP Registry
+
+The official registry at `registry.modelcontextprotocol.io` is the primary distribution channel.
+
+```bash
+# Install the publisher CLI
+brew install mcp-publisher
+
+# Generate server.json (one-time)
+mcp-publisher init
+
+# Authenticate via GitHub
+mcp-publisher login github
+
+# Publish
+mcp-publisher publish
+```
+
+The `server.json` file should look like:
+```json
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.recon-fuzz/mcp-knowledge",
+  "description": "Search all Recon documentation — getrecon.xyz, book.getrecon.xyz, and getrecon.substack.com",
+  "repository": { "url": "https://github.com/Recon-Fuzz/recon-mcp-knowledge", "source": "github" },
+  "version": "2.1.1",
+  "packages": [{
+    "registryType": "npm",
+    "identifier": "@recon-fuzz/mcp-knowledge",
+    "version": "2.1.1",
+    "transport": { "type": "stdio" }
+  }]
+}
+```
+
+For recon-mcp-pro, add environment variables:
+```json
+"environmentVariables": [
+  { "name": "RECON_API_KEY", "description": "Recon Pro API key from getrecon.xyz/settings/api", "isRequired": true, "isSecret": true, "format": "string" }
+]
+```
+
+**CI automation** — add this GitHub Actions workflow for auto-publish on tag:
+```yaml
+name: Publish
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "lts/*" }
+      - run: npm ci && npm run build
+      - run: npm publish
+        env: { NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" }
+      - name: Install mcp-publisher
+        run: curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
+```
+
+## Step 4: Make GitHub repos public (knowledge + chimera only)
 
 ```bash
 gh repo edit Recon-Fuzz/recon-mcp-knowledge --visibility public
 gh repo edit Recon-Fuzz/recon-mcp-chimera --visibility public
-# Do NOT make recon-mcp-pro public — it exposes API endpoint structure
 ```
 
-## Step 4: Add to llms.txt on getrecon.xyz
+Do NOT make recon-mcp-pro public (see SECURITY_CONCERNS.md).
 
-Add an MCP server section to `llms-full.txt` so AI models that read Recon docs discover the tools automatically. This is the highest-leverage step — every AI reading your docs will know it can install and call these tools.
+## Step 5: Build .mcpb bundles for Claude Desktop
 
-Example section to add:
+`.mcpb` is the packaging standard for drag-and-drop install in Claude Desktop and Claude Code.
+
+```bash
+npx @anthropic-ai/mcpb init    # generates manifest.json
+npx @anthropic-ai/mcpb pack    # creates .mcpb archive
+```
+
+Users can then install by dragging the `.mcpb` file into Claude Desktop.
+
+## Step 6: Add MCP section to llms-full.txt on getrecon.xyz
+
+Add this to the generated `llms-full.txt` so AI models that read Recon docs discover the tools:
 
 ```markdown
 ---
 
-## MCP servers
+## MCP servers — AI tool integration
 
-AI tools can connect to Recon directly via MCP (Model Context Protocol) servers.
+Connect AI tools directly to Recon via MCP (Model Context Protocol).
 
-### recon-knowledge — search all Recon documentation
+### recon-knowledge — search all Recon documentation (14 tools)
 
 ```json
 {
@@ -74,9 +137,9 @@ AI tools can connect to Recon directly via MCP (Model Context Protocol) servers.
 }
 ```
 
-11 tools: search_glossary, get_blog_post, get_comparison, search_site, list_tools, get_book_chapter, get_book_concept, search_book, list_book_chapters, search_all, refresh_cache. No API key needed.
+Tools: search_glossary, get_blog_post, get_comparison, search_site, list_tools, get_book_chapter, get_book_concept, search_book, list_book_chapters, get_substack_post, search_substack, list_substack_posts, search_all, refresh_cache. No API key needed.
 
-### chimera-scaffold — generate Chimera fuzzing test suites
+### chimera-scaffold — generate Chimera fuzzing test suites (4 tools)
 
 ```json
 {
@@ -89,9 +152,9 @@ AI tools can connect to Recon directly via MCP (Model Context Protocol) servers.
 }
 ```
 
-4 tools: scaffold_project, generate_properties, get_template, explain_pattern. No API key needed.
+Tools: scaffold_project, generate_properties, get_template, explain_pattern. No API key needed.
 
-### recon-pro — submit and manage cloud fuzzing jobs
+### recon-pro — cloud fuzzing jobs (5 tools)
 
 ```json
 {
@@ -99,103 +162,96 @@ AI tools can connect to Recon directly via MCP (Model Context Protocol) servers.
     "recon-pro": {
       "command": "npx",
       "args": ["@recon-fuzz/mcp-pro"],
-      "env": {
-        "RECON_API_KEY": "rp_your_key_here"
-      }
+      "env": { "RECON_API_KEY": "rp_your_key_here" }
     }
   }
 }
 ```
 
-5 tools: submit_job, get_job_status, list_jobs, get_recipes, create_recipe. Requires API key from https://getrecon.xyz/settings/api.
+Tools: submit_job, get_job_status, list_jobs, get_recipes, create_recipe. Get your key at https://getrecon.xyz/settings/api.
 ```
 
-## Step 5: List in MCP directories
+## Step 7: Submit to all discovery channels
 
-Submit to these directories so AI tools can discover the servers without reading your docs first.
+### Tier 1 (must-have)
 
-### Smithery (smithery.ai)
+| Channel | Action |
+|---------|--------|
+| npm | `npm publish --access public` (done in Step 2) |
+| Official MCP Registry | `mcp-publisher publish` (done in Step 3) |
+| Smithery | `smithery mcp publish "https://github.com/Recon-Fuzz/recon-mcp-knowledge" -n @recon-fuzz/mcp-knowledge` or submit at smithery.ai/new |
+| Glama | Click "Add Server" at glama.ai/mcp/servers (14,000+ servers, runs vulnerability scans) |
+| GitHub modelcontextprotocol/servers | PR to add entries to github.com/modelcontextprotocol/servers |
 
-The largest MCP server directory. Submit via their web form or CLI.
+### Tier 2 (high-value)
 
-```bash
-npx smithery publish @recon-fuzz/mcp-knowledge
-```
+| Channel | Action |
+|---------|--------|
+| PulseMCP | Submit at pulsemcp.com/servers (11,000+ servers, weekly newsletter) |
+| MCP.so | Submit at mcp.so |
+| MCP Market | Submit at mcpmarket.com (19,000+ servers) |
+| Cursor Directory | Submit at cursor.directory/plugins |
+| MCP Index | Submit at mcpindex.net |
 
-### Official MCP registry (github.com/modelcontextprotocol/servers)
+### Tier 3 (awesome lists)
 
-Fork the repo, add your server entry, and open a PR.
+| Channel | Action |
+|---------|--------|
+| wong2/awesome-mcp-servers | PR to github.com/wong2/awesome-mcp-servers |
+| appcypher/awesome-mcp-servers | PR to github.com/appcypher/awesome-mcp-servers |
 
-```bash
-gh repo fork modelcontextprotocol/servers
-# Add entry to the directory listing
-# Open PR
-```
+### Tier 4 (platform-specific)
 
-### mcp.run
+| Platform | Action |
+|----------|--------|
+| Claude Desktop | Submit via Google form (linked from Anthropic docs) |
+| Claude Code | Submit at platform.claude.com/plugins/submit |
+| Windsurf | Auto-discovers from MCP Registry |
 
-Submit via web form at mcp.run. Focuses on hosted/managed MCP servers.
+## Step 8: Test with real clients
 
-### Cursor MCP directory
-
-Cursor auto-discovers MCP servers from npm. Having the package published with proper MCP metadata in package.json is usually sufficient.
-
-## Step 6: Test with Claude Desktop
-
-Add the config to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
+### Claude Desktop
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "recon-knowledge": {
-      "command": "npx",
-      "args": ["@recon-fuzz/mcp-knowledge"]
-    },
-    "chimera-scaffold": {
-      "command": "npx",
-      "args": ["@recon-fuzz/mcp-chimera"]
-    },
-    "recon-pro": {
-      "command": "npx",
-      "args": ["@recon-fuzz/mcp-pro"],
-      "env": {
-        "RECON_API_KEY": "rp_your_key_here"
-      }
-    }
+    "recon-knowledge": { "command": "npx", "args": ["@recon-fuzz/mcp-knowledge"] },
+    "chimera-scaffold": { "command": "npx", "args": ["@recon-fuzz/mcp-chimera"] },
+    "recon-pro": { "command": "npx", "args": ["@recon-fuzz/mcp-pro"], "env": { "RECON_API_KEY": "rp_..." } }
   }
 }
 ```
 
-Restart Claude Desktop. You should see the tools listed in the toolbar. Test by asking:
+### MCP Inspector (protocol validation)
+```bash
+npx @modelcontextprotocol/inspector node dist/index.js
+# Opens browser UI at http://localhost:6274
+```
 
-- "Search Recon docs for chimera" (triggers recon-knowledge)
-- "Scaffold a Chimera test suite for an ERC20 token" (triggers chimera-scaffold)
-- "List my recent fuzzing jobs" (triggers recon-pro)
-
-## Step 7: Test with Cursor
-
-Open Cursor settings, go to MCP, and add the same server configs. The tools will appear in Cursor's AI chat.
+Test: "Search Recon docs for chimera", "Scaffold a vault test suite", "List my fuzzing jobs".
 
 ## Checklist
 
+### Publish
 - [ ] npm org `@recon-fuzz` exists
 - [ ] `@recon-fuzz/mcp-knowledge` published to npm (public)
 - [ ] `@recon-fuzz/mcp-chimera` published to npm (public)
-- [ ] `@recon-fuzz/mcp-pro` published to npm (restricted access)
+- [ ] `@recon-fuzz/mcp-pro` published to npm (restricted)
+- [ ] `server.json` created for each server
+- [ ] All 3 published to Official MCP Registry
+- [ ] `.mcpb` bundles built for Claude Desktop
+
+### Visibility
 - [ ] recon-mcp-knowledge repo is public
 - [ ] recon-mcp-chimera repo is public
-- [ ] recon-mcp-pro repo stays private
-- [ ] MCP server section added to llms-full.txt on getrecon.xyz
-- [ ] Listed on Smithery
-- [ ] PR submitted to modelcontextprotocol/servers registry
-- [ ] Tested with Claude Desktop
-- [ ] Tested with Cursor
+- [ ] recon-mcp-pro stays private
+- [ ] MCP section added to llms-full.txt
+- [ ] Listed on Smithery + Glama + PulseMCP
+- [ ] PR to modelcontextprotocol/servers + awesome-mcp-servers
+- [ ] Submitted to Claude Code marketplace
 
-## What happens after activation
-
-Once published and listed:
-
-1. **Claude Desktop / Cursor users** who install the MCP server get direct tool access to Recon docs and scaffolding
-2. **AI models reading llms-full.txt** see the MCP config and can recommend installation to users
-3. **Smithery / registry users** discover Recon tools when searching for fuzzing or security
-4. **Every fuzzing conversation** becomes a potential Recon touchpoint — the AI doesn't just cite Recon, it calls Recon tools
+### Validation
+- [ ] MCP Inspector passes for all 3 servers
+- [ ] Tested in Claude Desktop
+- [ ] Tested in Cursor
+- [ ] `npm audit` clean for all 3
